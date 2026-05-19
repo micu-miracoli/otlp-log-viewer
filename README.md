@@ -2,7 +2,7 @@
 
 Take-home for Dash0. A log viewer that fetches [OTLP-formatted logs](https://opentelemetry.io/docs/concepts/signals/logs/) and helps engineers scan, drill into details, and understand distribution patterns across services.
 
-**Live:** _not deployed yet_
+**Live:** ~~not deployed yet~~  [https://otlp-log-viewer-phi.vercel.app/](https://otlp-log-viewer-phi.vercel.app/)
 **API:** configured via `NEXT_PUBLIC_LOGS_API_URL` in `.env.local`
 
 ---
