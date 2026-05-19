@@ -333,9 +333,11 @@ function LogViewerShell({
               logs={filteredLogs}
               expandedGroups={expandedGroups}
               onToggleGroup={onToggleGroup}
+              filterActive={isFiltered}
+              highlight={filterText.trim()}
             />
           ) : (
-            <LogTable logs={filteredLogs} />
+            <LogTable logs={filteredLogs} highlight={filterText.trim()} />
           )}
         </section>
       </div>

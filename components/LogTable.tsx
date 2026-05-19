@@ -197,22 +197,50 @@ const COLS: ColumnDef<FlatLogRecord>[] = [
     size: 150,
     cell: ({ row }) => <TimeCell timestampMs={row.original.timestampMs} />,
   },
-  {
-    id: 'body',
-    header: 'Body',
-    cell: ({ row }) => {
-      const body = resolvedToString(row.original.body);
-      return (
-        <span
-          className="font-mono text-xs text-zinc-300 truncate block"
-          title={body}
-        >
-          {body || <span className="text-zinc-700 italic">empty</span>}
-        </span>
-      );
-    },
-  },
+  // body column is injected by makeColumns() so it can close over `highlight`
 ];
+
+// ─── Body cell with optional match highlighting ───────────────────────────────
+function BodyCell({ body, highlight }: { body: string; highlight: string }) {
+  if (!highlight || !body) {
+    return (
+      <span className="font-mono text-xs text-zinc-300 truncate block" title={body}>
+        {body || <span className="text-zinc-700 italic">empty</span>}
+      </span>
+    );
+  }
+  const idx = body.toLowerCase().indexOf(highlight.toLowerCase());
+  if (idx === -1) {
+    return (
+      <span className="font-mono text-xs text-zinc-300 truncate block" title={body}>
+        {body}
+      </span>
+    );
+  }
+  return (
+    <span className="font-mono text-xs text-zinc-300 truncate block" title={body}>
+      {body.slice(0, idx)}
+      <mark className="bg-yellow-400/25 text-yellow-200 rounded-sm not-italic">
+        {body.slice(idx, idx + highlight.length)}
+      </mark>
+      {body.slice(idx + highlight.length)}
+    </span>
+  );
+}
+
+// ─── Column factory — body column closes over the highlight term ──────────────
+function makeColumns(highlight: string): ColumnDef<FlatLogRecord>[] {
+  return [
+    ...COLS,
+    {
+      id: 'body',
+      header: 'Body',
+      cell: ({ row }) => (
+        <BodyCell body={resolvedToString(row.original.body)} highlight={highlight} />
+      ),
+    },
+  ];
+}
 
 // Grid template shared by header and data rows — keeps columns aligned.
 const GRID_COLS = '110px 150px 1fr';
@@ -260,15 +288,18 @@ const EXPANDED_HEIGHT_ESTIMATE = 180;
 // ─── Public props ─────────────────────────────────────────────────────────────
 interface LogTableProps {
   logs: FlatLogRecord[];
+  highlight?: string;
 }
 
-export function LogTable({ logs }: LogTableProps) {
+export function LogTable({ logs, highlight = '' }: LogTableProps) {
   const [expanded, setExpanded] = useState<ExpandedState>({});
   const containerRef = useRef<HTMLDivElement>(null);
 
+  const columns = useMemo(() => makeColumns(highlight), [highlight]);
+
   const table = useReactTable({
     data: logs,
-    columns: COLS,
+    columns,
     state: { expanded },
     onExpandedChange: setExpanded,
     getCoreRowModel: getCoreRowModel(),

@@ -138,9 +138,18 @@ interface GroupedViewProps {
   logs: FlatLogRecord[];
   expandedGroups: ReadonlySet<string>;
   onToggleGroup: (key: string) => void;
+  /** When true (filter is active) every group is forced open so matches are visible. */
+  filterActive?: boolean;
+  highlight?: string;
 }
 
-export function GroupedView({ logs, expandedGroups, onToggleGroup }: GroupedViewProps) {
+export function GroupedView({
+  logs,
+  expandedGroups,
+  onToggleGroup,
+  filterActive = false,
+  highlight = '',
+}: GroupedViewProps) {
   const groups = useMemo(() => groupLogs(logs), [logs]);
 
   if (groups.length === 0) {
@@ -154,7 +163,9 @@ export function GroupedView({ logs, expandedGroups, onToggleGroup }: GroupedView
   return (
     <div className="flex flex-col gap-1.5 overflow-auto h-full">
       {groups.map((group) => {
-        const isExpanded = expandedGroups.has(group.key);
+        // While a filter is active every group is expanded so matches are
+        // immediately visible — the user shouldn't have to open each one manually.
+        const isExpanded = filterActive || expandedGroups.has(group.key);
         // Size the inner LogTable to its content up to a comfortable cap so
         // multiple expanded groups can coexist on screen without each claiming
         // the full viewport height.
@@ -172,7 +183,7 @@ export function GroupedView({ logs, expandedGroups, onToggleGroup }: GroupedView
             />
             {isExpanded && (
               <div style={{ height: tableHeight }}>
-                <LogTable logs={group.logs} />
+                <LogTable logs={group.logs} highlight={highlight} />
               </div>
             )}
           </div>
