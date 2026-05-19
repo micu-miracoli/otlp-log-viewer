@@ -12,6 +12,7 @@
     "@opentelemetry/otlp-transformer": "^0.218.0",
     "@tanstack/react-query": "^5.100.11",
     "@tanstack/react-table": "^8.21.3",
+    "@tanstack/react-virtual": "^3.13.24",
     "clsx": "^2.1.1",
     "date-fns": "^4.2.1",
     "lucide-react": "^1.16.0",
