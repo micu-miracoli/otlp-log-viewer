@@ -1,55 +1,98 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
+import { useRouter, usePathname, useSearchParams } from 'next/navigation';
 import { RefreshCw, Activity } from 'lucide-react';
 import { format } from 'date-fns';
 import { useLogs } from '@/hooks/useLogs';
 import { Histogram, type TimeRange } from '@/components/Histogram';
 import { LogTable } from '@/components/LogTable';
+import { GroupedView } from '@/components/GroupedView';
+import type { FlatLogRecord } from '@/lib/otlp/flatten';
 
-export function LogViewer() {
-  const {
-    data: logs = [],
-    isLoading,
-    isError,
-    error,
-    refetch,
-    isFetching,
-    dataUpdatedAt,
-  } = useLogs();
+// ─── Types ────────────────────────────────────────────────────────────────────
+type ViewMode = 'flat' | 'grouped';
 
+const PARAM_VIEW     = 'view';
+const PARAM_EXPANDED = 'expanded';
+
+// ─── Segmented control ────────────────────────────────────────────────────────
+function ViewToggle({ value, onChange }: { value: ViewMode; onChange: (v: ViewMode) => void }) {
+  return (
+    <div role="group" aria-label="View mode" className="flex items-center bg-zinc-800/60 rounded-md p-0.5 gap-0.5">
+      {(['flat', 'grouped'] as const).map((mode) => (
+        <button
+          key={mode}
+          onClick={() => onChange(mode)}
+          aria-pressed={value === mode}
+          className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+            value === mode
+              ? 'bg-zinc-700 text-zinc-100 shadow-sm'
+              : 'text-zinc-500 hover:text-zinc-300'
+          }`}
+        >
+          {mode === 'flat' ? 'Flat' : 'Grouped by Service'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── Inner shell — owns ephemeral brush state ─────────────────────────────────
+// Separated from the URL-state outer so that useState and useSearchParams
+// never share a component boundary, keeping hook ordering unambiguous.
+function LogViewerShell({
+  view,
+  expandedGroups,
+  logs,
+  isLoading,
+  isError,
+  error,
+  isFetching,
+  dataUpdatedAt,
+  refetch,
+  onSetView,
+  onToggleGroup,
+}: {
+  view: ViewMode;
+  expandedGroups: ReadonlySet<string>;
+  logs: FlatLogRecord[];
+  isLoading: boolean;
+  isError: boolean;
+  error: unknown;
+  isFetching: boolean;
+  dataUpdatedAt: number;
+  refetch: () => void;
+  onSetView: (v: ViewMode) => void;
+  onToggleGroup: (key: string) => void;
+}) {
   const [timeRange, setTimeRange] = useState<TimeRange | null>(null);
 
-  // When new data arrives, clear any stale brush selection.
-  // (The histogram will rebuild buckets; the old range may no longer be valid.)
-  const filteredLogs = useMemo(() => {
-    if (!timeRange) return logs;
-    return logs.filter(
-      (log) =>
-        log.timestampMs >= timeRange.startMs && log.timestampMs <= timeRange.endMs
-    );
-  }, [logs, timeRange]);
+  const filteredLogs = useMemo(
+    () =>
+      timeRange
+        ? logs.filter(
+            (l) => l.timestampMs >= timeRange.startMs && l.timestampMs <= timeRange.endMs
+          )
+        : logs,
+    [logs, timeRange]
+  );
 
-  const lastFetched =
-    dataUpdatedAt > 0 ? format(dataUpdatedAt, 'HH:mm:ss') : null;
+  const lastFetched = dataUpdatedAt > 0 ? format(dataUpdatedAt, 'HH:mm:ss') : null;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-zinc-950 text-zinc-100">
+
       {/* ── Header ─────────────────────────────────────────────────────────── */}
       <header className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-zinc-800 bg-zinc-900/80 backdrop-blur-sm">
         <div className="flex items-center gap-2.5">
           <Activity className="w-4 h-4 text-blue-400 shrink-0" />
           <span className="text-sm font-semibold tracking-tight">OTLP Log Viewer</span>
         </div>
-
         <div className="flex items-center gap-3 text-xs">
-          {isError && (
-            <span className="text-red-400">Failed to load logs</span>
-          )}
+          {isError && <span className="text-red-400">Failed to load logs</span>}
           {lastFetched && !isError && (
-            <span className="text-zinc-600 tabular-nums">
-              updated {lastFetched}
-            </span>
+            <span className="text-zinc-600 tabular-nums">updated {lastFetched}</span>
           )}
           <button
             onClick={() => refetch()}
@@ -82,7 +125,6 @@ export function LogViewer() {
               </button>
             )}
           </div>
-
           {isLoading ? (
             <div className="h-48 flex items-center justify-center">
               <span className="w-6 h-6 rounded-full border-2 border-zinc-700 border-t-blue-400 animate-spin" />
@@ -92,27 +134,30 @@ export function LogViewer() {
           )}
         </section>
 
-        {/* Active filter status */}
-        {timeRange ? (
-          <div className="shrink-0 flex items-center gap-1.5 text-[11px] text-zinc-400">
-            <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
-            <span>
-              {filteredLogs.length.toLocaleString()} of {logs.length.toLocaleString()} logs
-            </span>
-            <span className="text-zinc-700 mx-0.5">·</span>
-            <span className="font-mono text-zinc-500">
-              {format(timeRange.startMs, 'HH:mm:ss')}
-              <span className="mx-1 text-zinc-700">–</span>
-              {format(timeRange.endMs, 'HH:mm:ss')}
-            </span>
+        {/* Status + view toggle */}
+        <div className="shrink-0 flex items-center justify-between gap-4 min-h-[22px]">
+          <div className="text-[11px] text-zinc-500">
+            {timeRange ? (
+              <span className="flex items-center gap-1.5">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />
+                {filteredLogs.length.toLocaleString()} of {logs.length.toLocaleString()} logs
+                <span className="text-zinc-700 mx-0.5">·</span>
+                <span className="font-mono text-zinc-600">
+                  {format(timeRange.startMs, 'HH:mm:ss')}
+                  <span className="mx-1 text-zinc-700">–</span>
+                  {format(timeRange.endMs, 'HH:mm:ss')}
+                </span>
+              </span>
+            ) : !isLoading ? (
+              <span className="text-zinc-700">
+                {logs.length.toLocaleString()} log records · drag histogram to filter
+              </span>
+            ) : null}
           </div>
-        ) : !isLoading && (
-          <div className="shrink-0 text-[11px] text-zinc-700">
-            {logs.length.toLocaleString()} log records · drag the histogram to filter
-          </div>
-        )}
+          <ViewToggle value={view} onChange={onSetView} />
+        </div>
 
-        {/* Log table */}
+        {/* Main view */}
         <section className="flex-1 min-h-0">
           {isError ? (
             <div className="h-full flex flex-col items-center justify-center gap-3 rounded-lg border border-zinc-800">
@@ -127,11 +172,85 @@ export function LogViewer() {
                 Try again
               </button>
             </div>
+          ) : view === 'grouped' ? (
+            <GroupedView
+              logs={filteredLogs}
+              expandedGroups={expandedGroups}
+              onToggleGroup={onToggleGroup}
+            />
           ) : (
             <LogTable logs={filteredLogs} />
           )}
         </section>
       </div>
     </div>
+  );
+}
+
+// ─── Outer component — owns URL state ─────────────────────────────────────────
+// Must be wrapped in <Suspense> by the caller (page.tsx) so that
+// useSearchParams doesn't block prerendering in production builds.
+export function LogViewer() {
+  const router   = useRouter();
+  const pathname = usePathname();
+  const params   = useSearchParams();
+
+  const view = (params.get(PARAM_VIEW) ?? 'flat') as ViewMode;
+
+  const expandedGroups = useMemo<ReadonlySet<string>>(() => {
+    const raw = params.get(PARAM_EXPANDED);
+    return new Set(raw ? raw.split(',').filter(Boolean) : []);
+  }, [params]);
+
+  const navigate = useCallback(
+    (mutate: (p: URLSearchParams) => void, replace = false) => {
+      const next = new URLSearchParams(params.toString());
+      mutate(next);
+      const qs = next.toString();
+      const url = qs ? `${pathname}?${qs}` : pathname;
+      replace ? router.replace(url) : router.push(url);
+    },
+    [params, pathname, router]
+  );
+
+  const handleSetView = useCallback(
+    (v: ViewMode) =>
+      navigate((p) => {
+        if (v === 'flat') { p.delete(PARAM_VIEW); p.delete(PARAM_EXPANDED); }
+        else p.set(PARAM_VIEW, v);
+      }),
+    [navigate]
+  );
+
+  const handleToggleGroup = useCallback(
+    (key: string) =>
+      navigate((p) => {
+        const next = new Set(expandedGroups);
+        next.has(key) ? next.delete(key) : next.add(key);
+        next.size === 0 ? p.delete(PARAM_EXPANDED) : p.set(PARAM_EXPANDED, [...next].join(','));
+      }, /* replace */ true),
+    [navigate, expandedGroups]
+  );
+
+  const {
+    data: logs = [],
+    isLoading, isError, error,
+    refetch, isFetching, dataUpdatedAt,
+  } = useLogs();
+
+  return (
+    <LogViewerShell
+      view={view}
+      expandedGroups={expandedGroups}
+      logs={logs}
+      isLoading={isLoading}
+      isError={isError}
+      error={error}
+      isFetching={isFetching}
+      dataUpdatedAt={dataUpdatedAt}
+      refetch={refetch}
+      onSetView={handleSetView}
+      onToggleGroup={handleToggleGroup}
+    />
   );
 }
